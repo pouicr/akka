@@ -82,9 +82,7 @@ class ActorProducerTest extends TestKit(ActorSystem("test")) with WordSpec with 
           "not block forever" in {
             producer = given(outCapable = false, autoAck = false)
             import system.dispatcher
-            val future = Future {
-              producer.processExchangeAdapter(exchange)
-            }
+            val future = Future { producer.processExchangeAdapter(exchange) }
             within(1 second) {
               probe.expectMsgType[CamelMessage]
               info("message sent to consumer")
@@ -112,23 +110,29 @@ class ActorProducerTest extends TestKit(ActorSystem("test")) with WordSpec with 
 
         "response is not sent by actor" must {
 
-          def process() = {
-            producer = given(outCapable = true, replyTimeout = 100 millis)
-            time(producer.processExchangeAdapter(exchange))
-          }
-
-          "timeout after replyTimeout" taggedAs TimingTest in {
-            val duration = process()
-            duration must (be >= (100 millis) and be < (300 millis))
+          def setup() = producer = given(outCapable = true, replyTimeout = 100 millis)
+          "timeout after replyTimeout" in {
+            setup()
+            time {
+              val testCB = new TestAsyncCallback
+              producer.processExchangeAdapter(exchange, testCB)
+              testCB.awaitCalled(remaining)
+            } must (be >= (100 millis) and be < (300 millis))
           }
 
           "never set the response on exchange" in {
-            process()
+            setup()
+            val testCB = new TestAsyncCallback
+            producer.processExchangeAdapter(exchange, testCB)
+            testCB.awaitCalled(remaining)
             verify(exchange, Mockito.never()).setResponse(any[CamelMessage])
           }
 
           "set failure message to timeout" in {
-            process()
+            setup()
+            val testCB = new TestAsyncCallback
+            producer.processExchangeAdapter(exchange, testCB)
+            testCB.awaitCalled(remaining)
             verify(exchange).setFailure(any[FailureResult])
           }
         }
@@ -363,9 +367,8 @@ trait ActorProducerFixture extends MockitoSugar with BeforeAndAfterAll with Befo
   def createAsyncCallback = new TestAsyncCallback
 
   class TestAsyncCallback extends AsyncCallback {
-    def expectNoCallWithin(duration: Duration) {
-      if (callbackReceived.await(duration.toNanos, TimeUnit.NANOSECONDS)) fail("NOT expected callback, but received one!")
-    }
+    def expectNoCallWithin(duration: Duration): Unit =
+      if (callbackReceived.await(duration.length, duration.unit)) fail("NOT expected callback, but received one!")
 
     def awaitCalled(timeout: Duration = 1 second) { valueWithin(1 second) }
 
@@ -378,7 +381,7 @@ trait ActorProducerFixture extends MockitoSugar with BeforeAndAfterAll with Befo
     }
 
     private[this] def valueWithin(implicit timeout: FiniteDuration) =
-      if (!callbackReceived.await(timeout.toNanos, TimeUnit.NANOSECONDS)) fail("Callback not received!")
+      if (!callbackReceived.await(timeout.length, timeout.unit)) fail("Callback not received!")
       else callbackValue.get
 
     def expectDoneSyncWithin(implicit timeout: FiniteDuration): Unit = if (!valueWithin(timeout)) fail("Expected to be done Synchronously")
